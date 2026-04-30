@@ -3,16 +3,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { ToastProvider } from '../components/Toast.jsx'
 
-// mockEmit must be hoisted so it's available inside vi.mock factories
-const { mockEmit } = vi.hoisted(() => ({ mockEmit: vi.fn() }))
+// mockEmit and mockConnected must be hoisted so they're available inside vi.mock factories
+const { mockEmit, mockConnected } = vi.hoisted(() => ({
+  mockEmit: vi.fn(),
+  mockConnected: { value: true },
+}))
 
 // Mock WebSocketContext so socket.emit is always available
 vi.mock('../contexts/WebSocketContext.jsx', () => ({
   useSocket: () => ({
     socket: { emit: mockEmit, on: vi.fn(), off: vi.fn() },
-    connected: true,
+    connected: mockConnected.value,
   }),
   WebSocketProvider: ({ children }) => <>{children}</>,
+}))
+
+// SharedCanvas requires a real browser canvas — stub it out so DrawingScreen is testable
+vi.mock('../components/canvas/SharedCanvas.jsx', () => ({
+  default: () => <div data-testid="shared-canvas" />,
 }))
 
 // GameStateContext: real reducer, but using our mocked socket context
@@ -21,6 +29,9 @@ import HomeScreen from '../screens/HomeScreen.jsx'
 import LobbyScreen from '../screens/LobbyScreen.jsx'
 import WordAssignmentScreen from '../screens/WordAssignmentScreen.jsx'
 import VotingScreen from '../screens/VotingScreen.jsx'
+import DrawingScreen from '../screens/DrawingScreen.jsx'
+import RevealScreen from '../screens/RevealScreen.jsx'
+import ErrorScreen from '../screens/ErrorScreen.jsx'
 import App from '../App.jsx'
 
 function Wrapper({ children }) {
@@ -73,6 +84,7 @@ function lobbyDispatch(dispatch) {
 
 beforeEach(() => {
   mockEmit.mockClear()
+  mockConnected.value = true
   localStorage.clear()
 })
 
@@ -283,6 +295,256 @@ describe('VotingScreen', () => {
     expect(mockEmit).toHaveBeenCalledWith('submit_vote', {
       sessionToken: 'tok',
       targetPlayerId: 'p2',
+    })
+  })
+})
+
+// ── DrawingScreen ─────────────────────────────────────────────────────────────
+
+describe('DrawingScreen', () => {
+  const players = [
+    { id: 'p1', displayName: 'Alice', isHost: true, isConnected: true },
+    { id: 'p2', displayName: 'Bob', isHost: false, isConnected: true },
+    { id: 'p3', displayName: 'Carol', isHost: false, isConnected: true },
+  ]
+
+  function drawingDispatch({ playerId = 'p1', activePlayerId = 'p2', role = 'artist', word = 'cat' } = {}) {
+    return (dispatch) => {
+      // Lobby state: drawOrder is still empty — this is what causes the bug without the fix
+      dispatch({
+        type: 'ROOM_JOINED',
+        payload: {
+          sessionToken: 'tok',
+          playerId,
+          roomState: {
+            phase: 'lobby',
+            roomCode: 'BCDFGH',
+            hostId: 'p1',
+            players,
+            drawOrder: [],
+            currentTurnIdx: -1,
+            turnSeq: 0,
+            strokes: [],
+            readyCount: 0,
+          },
+        },
+      })
+      dispatch({ type: 'ROLE_ASSIGNED', payload: { role, word } })
+      dispatch({ type: 'ALL_READY' })
+      // TURN_START is the sole source of drawOrder — must populate it
+      dispatch({
+        type: 'TURN_START',
+        payload: {
+          activePlayerId,
+          drawOrder: ['p1', 'p2', 'p3'],
+          currentTurnIdx: ['p1', 'p2', 'p3'].indexOf(activePlayerId),
+          turnSeq: 1,
+          roundNumber: 1,
+          totalRounds: 2,
+          timeoutAt: Date.now() + 30000,
+        },
+      })
+    }
+  }
+
+  it('shows active player name when spectating (regression: was showing "...")', () => {
+    render(withState(drawingDispatch({ activePlayerId: 'p2' }), <DrawingScreen />))
+    expect(screen.getByText(/Bob is drawing/)).toBeInTheDocument()
+  })
+
+  it('shows "Your turn" label when it is the local player\'s turn', () => {
+    render(withState(drawingDispatch({ playerId: 'p1', activePlayerId: 'p1' }), <DrawingScreen />))
+    expect(screen.getByText('Your turn')).toBeInTheDocument()
+  })
+
+  it('shows End Turn button when it is the local player\'s turn', () => {
+    render(withState(drawingDispatch({ playerId: 'p1', activePlayerId: 'p1' }), <DrawingScreen />))
+    expect(screen.getByText('End Turn')).toBeInTheDocument()
+  })
+
+  it('shows word for artist on their turn', () => {
+    render(withState(drawingDispatch({ playerId: 'p1', activePlayerId: 'p1', role: 'artist', word: 'elephant' }), <DrawingScreen />))
+    expect(screen.getByText('elephant')).toBeInTheDocument()
+  })
+
+  it('shows IMPOSTER label for imposter on their turn', () => {
+    render(withState(drawingDispatch({ playerId: 'p1', activePlayerId: 'p1', role: 'imposter' }), <DrawingScreen />))
+    expect(screen.getByText(/IMPOSTER/)).toBeInTheDocument()
+  })
+
+  it('shows correct spectator turn countdown', () => {
+    // p1 is local player, drawOrder=['p1','p2','p3'], active is p2 (idx 1)
+    // diff = (0 - 1 + 3) % 3 = 2
+    render(withState(drawingDispatch({ playerId: 'p1', activePlayerId: 'p2' }), <DrawingScreen />))
+    expect(screen.getByText(/your turn in 2 turns/i)).toBeInTheDocument()
+  })
+
+  it('emits end_turn with sessionToken and turnSeq when End Turn clicked', () => {
+    render(withState(drawingDispatch({ playerId: 'p1', activePlayerId: 'p1' }), <DrawingScreen />))
+    fireEvent.click(screen.getByText('End Turn'))
+    expect(mockEmit).toHaveBeenCalledWith('end_turn', expect.objectContaining({
+      sessionToken: 'tok',
+      turnSeq: 1,
+    }))
+  })
+
+  it('renders the shared canvas', () => {
+    render(withState(drawingDispatch(), <DrawingScreen />))
+    expect(screen.getByTestId('shared-canvas')).toBeInTheDocument()
+  })
+})
+
+// ── RevealScreen ──────────────────────────────────────────────────────────────
+
+describe('RevealScreen', () => {
+  const revealPayload = {
+    imposterId: 'p2',
+    imposterName: 'Bob',
+    secretWord: 'volcano',
+    votes: {
+      p1: { count: 1, voterIds: ['p3'] },
+      p2: { count: 2, voterIds: ['p1', 'p2'] },
+      p3: { count: 0, voterIds: [] },
+    },
+    outcome: 'caught',
+  }
+
+  function renderReveal({ isHost = true } = {}) {
+    return render(
+      withState(
+        (d) => {
+          d({
+            type: 'ROOM_JOINED',
+            payload: {
+              sessionToken: 'tok',
+              playerId: isHost ? 'p1' : 'p3',
+              roomState: {
+                phase: 'reveal',
+                roomCode: 'X',
+                hostId: 'p1',
+                players: [
+                  { id: 'p1', displayName: 'Alice', isHost: true, isConnected: true },
+                  { id: 'p2', displayName: 'Bob', isHost: false, isConnected: true },
+                  { id: 'p3', displayName: 'Carol', isHost: false, isConnected: true },
+                ],
+                drawOrder: [],
+                currentTurnIdx: -1,
+                turnSeq: 0,
+                strokes: [],
+                readyCount: 0,
+              },
+            },
+          })
+          d({ type: 'REVEAL', payload: revealPayload })
+        },
+        <RevealScreen />
+      )
+    )
+  }
+
+  it('renders vote bars immediately (stage 0)', () => {
+    renderReveal()
+    expect(screen.getByText('Alice')).toBeInTheDocument()
+    expect(screen.getByText('Bob')).toBeInTheDocument()
+  })
+
+  it('shows imposter name and secret word after all stages', async () => {
+    vi.useFakeTimers()
+    renderReveal()
+    await act(async () => { vi.advanceTimersByTime(7100) })
+    expect(screen.getByText('volcano')).toBeInTheDocument()
+    expect(screen.getByText('The secret word was')).toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it('shows Play Again for host after all stages', async () => {
+    vi.useFakeTimers()
+    renderReveal({ isHost: true })
+    await act(async () => { vi.advanceTimersByTime(7100) })
+    expect(screen.getByText('Play Again')).toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it('does not show Play Again for non-host', async () => {
+    vi.useFakeTimers()
+    renderReveal({ isHost: false })
+    await act(async () => { vi.advanceTimersByTime(7100) })
+    expect(screen.queryByText('Play Again')).not.toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it('emits play_again when host clicks Play Again', async () => {
+    vi.useFakeTimers()
+    renderReveal({ isHost: true })
+    await act(async () => { vi.advanceTimersByTime(7100) })
+    fireEvent.click(screen.getByText('Play Again'))
+    expect(mockEmit).toHaveBeenCalledWith('play_again', { sessionToken: 'tok' })
+    vi.useRealTimers()
+  })
+})
+
+// ── ErrorScreen ───────────────────────────────────────────────────────────────
+
+describe('ErrorScreen', () => {
+  function renderError({ connected = false, hasSession = true } = {}) {
+    mockConnected.value = connected
+    return render(
+      withState(
+        (d) => {
+          if (hasSession) {
+            d({
+              type: 'ROOM_JOINED',
+              payload: {
+                sessionToken: 'tok',
+                playerId: 'p1',
+                roomState: {
+                  phase: 'disconnected',
+                  roomCode: 'BCDFGH',
+                  hostId: 'p1',
+                  players: [],
+                  drawOrder: [],
+                  currentTurnIdx: -1,
+                  turnSeq: 0,
+                  strokes: [],
+                  readyCount: 0,
+                },
+              },
+            })
+          }
+          d({ type: 'DISCONNECTED' })
+        },
+        <ErrorScreen />
+      )
+    )
+  }
+
+  it('shows Disconnected heading', () => {
+    renderError()
+    expect(screen.getByText('Disconnected')).toBeInTheDocument()
+  })
+
+  it('shows enabled Rejoin button when disconnected and has roomCode', () => {
+    renderError({ connected: false })
+    const btn = screen.getByText(/Rejoin/i)
+    expect(btn).not.toBeDisabled()
+  })
+
+  it('shows disabled Reconnecting button when connected', () => {
+    renderError({ connected: true })
+    expect(screen.getByText('Reconnecting…')).toBeDisabled()
+  })
+
+  it('shows Go Home button', () => {
+    renderError()
+    expect(screen.getByText('Go Home')).toBeInTheDocument()
+  })
+
+  it('emits rejoin_room when Rejoin is clicked', () => {
+    renderError({ connected: false })
+    fireEvent.click(screen.getByText(/Rejoin/i))
+    expect(mockEmit).toHaveBeenCalledWith('rejoin_room', {
+      sessionToken: 'tok',
+      roomCode: 'BCDFGH',
     })
   })
 })

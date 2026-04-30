@@ -95,6 +95,7 @@ export function startTurn(room) {
 
   io.to(room.roomCode).emit('turn_start', {
     activePlayerId,
+    drawOrder: room.drawOrder,
     turnSeq: room.turnSeq,
     turnNumber: room.currentTurnIdx + 1,
     totalTurns: room.drawOrder.length,
