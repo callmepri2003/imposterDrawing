@@ -78,6 +78,7 @@ function reducer(state, action) {
     case 'TURN_START':
       return {
         ...state,
+        drawOrder: action.payload.drawOrder ?? state.drawOrder,
         currentTurnIdx: action.payload.currentTurnIdx ?? state.currentTurnIdx,
         turnSeq: action.payload.turnSeq,
         turnStart: action.payload,
@@ -174,8 +175,8 @@ export function GameStateProvider({ children }) {
       on('ready_update', (data) => dispatch({ type: 'READY_UPDATE', payload: data })),
       on('all_ready', () => dispatch({ type: 'ALL_READY' })),
       on('turn_start', (data) => {
-        const s = stateRef.current
-        const idx = s.drawOrder.findIndex(id => id === data.activePlayerId)
+        const drawOrder = data.drawOrder ?? stateRef.current.drawOrder
+        const idx = drawOrder.findIndex(id => id === data.activePlayerId)
         dispatch({ type: 'TURN_START', payload: { ...data, currentTurnIdx: idx } })
       }),
       on('stroke_end', (data) => dispatch({ type: 'STROKE_COMMITTED', payload: data })),

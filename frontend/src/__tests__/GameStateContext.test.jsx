@@ -236,6 +236,124 @@ describe('GameStateContext reducer', () => {
     expect(captured.reveal.outcome).toBe('caught')
   })
 
+  it('TURN_START sets drawOrder and computes currentTurnIdx', () => {
+    let captured
+    let dispatch
+    function Capture() {
+      const ctx = useGameState()
+      dispatch = ctx.dispatch
+      captured = ctx.state
+      return null
+    }
+    render(<Wrapper><Capture /></Wrapper>)
+
+    // Simulate lobby state where drawOrder is still empty
+    act(() => {
+      dispatch({
+        type: 'ROOM_JOINED',
+        payload: {
+          sessionToken: 'tok',
+          playerId: 'p1',
+          roomState: {
+            phase: 'lobby',
+            roomCode: 'ABCDEF',
+            hostId: 'p1',
+            players: [
+              { id: 'p1', displayName: 'Alice', isHost: true, isConnected: true },
+              { id: 'p2', displayName: 'Bob', isHost: false, isConnected: true },
+              { id: 'p3', displayName: 'Carol', isHost: false, isConnected: true },
+            ],
+            drawOrder: [],
+            currentTurnIdx: -1,
+            turnSeq: 0,
+            strokes: [],
+            readyCount: 0,
+          },
+        },
+      })
+    })
+
+    act(() => {
+      dispatch({
+        type: 'TURN_START',
+        payload: {
+          activePlayerId: 'p2',
+          drawOrder: ['p1', 'p2', 'p3'],
+          currentTurnIdx: 1,
+          turnSeq: 1,
+          roundNumber: 1,
+          totalRounds: 2,
+          timeoutAt: Date.now() + 30000,
+        },
+      })
+    })
+
+    expect(captured.drawOrder).toEqual(['p1', 'p2', 'p3'])
+    expect(captured.currentTurnIdx).toBe(1)
+    expect(captured.turnSeq).toBe(1)
+  })
+
+  it('TURN_START with drawOrder in payload overrides empty drawOrder from lobby', () => {
+    // This is the regression test for the "... is drawing" bug.
+    // Before the fix, TURN_START never updated drawOrder, so it stayed [] from lobby.
+    let captured
+    let dispatch
+    function Capture() {
+      const ctx = useGameState()
+      dispatch = ctx.dispatch
+      captured = ctx.state
+      return null
+    }
+    render(<Wrapper><Capture /></Wrapper>)
+
+    // Lobby: drawOrder is empty (as it always is before start_game)
+    act(() => {
+      dispatch({
+        type: 'ROOM_JOINED',
+        payload: {
+          sessionToken: 'tok',
+          playerId: 'p1',
+          roomState: {
+            phase: 'lobby',
+            roomCode: 'ABCDEF',
+            hostId: 'p1',
+            players: [
+              { id: 'p1', displayName: 'Alice', isHost: true, isConnected: true },
+              { id: 'p2', displayName: 'Bob', isHost: false, isConnected: true },
+              { id: 'p3', displayName: 'Carol', isHost: false, isConnected: true },
+            ],
+            drawOrder: [],
+            currentTurnIdx: -1,
+            turnSeq: 0,
+            strokes: [],
+            readyCount: 0,
+          },
+        },
+      })
+    })
+
+    expect(captured.drawOrder).toEqual([]) // empty before game starts
+
+    // Server now sends drawOrder in the turn_start payload
+    act(() => {
+      dispatch({
+        type: 'TURN_START',
+        payload: {
+          activePlayerId: 'p2',
+          drawOrder: ['p1', 'p2', 'p3'],
+          currentTurnIdx: 1,
+          turnSeq: 1,
+          roundNumber: 1,
+          totalRounds: 2,
+          timeoutAt: Date.now() + 30000,
+        },
+      })
+    })
+
+    expect(captured.drawOrder).toEqual(['p1', 'p2', 'p3'])
+    expect(captured.currentTurnIdx).toBe(1)
+  })
+
   it('GAME_RESET returns to lobby phase', () => {
     let captured
     let dispatch

@@ -222,6 +222,13 @@ describe('drawing phase', () => {
     expect(firstTurn.timeoutAt).toBeGreaterThan(Date.now())
   })
 
+  it('turn_start includes drawOrder so clients can resolve player names', async () => {
+    const { firstTurn } = await startDrawing()
+    expect(Array.isArray(firstTurn.drawOrder)).toBe(true)
+    expect(firstTurn.drawOrder).toHaveLength(3)
+    expect(firstTurn.drawOrder).toContain(firstTurn.activePlayerId)
+  })
+
   it('does not broadcast stroke from the wrong player', async () => {
     const { a, b, c, firstTurn } = await startDrawing()
     const notActive = [a, b, c].find(x => x.playerId !== firstTurn.activePlayerId)
