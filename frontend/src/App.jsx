@@ -28,7 +28,7 @@ export default function App() {
     <WebSocketProvider>
       <GameStateProvider>
         <ToastProvider>
-          <div className="min-h-full">
+          <div className="h-full">
             <GameRouter />
           </div>
         </ToastProvider>

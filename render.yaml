@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: imposter-drawing-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production

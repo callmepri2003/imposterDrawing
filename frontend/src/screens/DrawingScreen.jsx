@@ -72,7 +72,7 @@ export default function DrawingScreen() {
   }
 
   return (
-    <div className="min-h-full flex flex-col p-3 max-w-lg mx-auto relative">
+    <div className="h-full flex flex-col p-3 max-w-lg mx-auto relative">
       {/* YOUR TURN banner */}
       {showTurnBanner && (
         <div className="absolute inset-0 z-20 bg-violet-600/90 flex items-center justify-center rounded-2xl pointer-events-none">
